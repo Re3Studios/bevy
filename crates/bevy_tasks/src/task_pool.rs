@@ -10,6 +10,16 @@ use futures_lite::{future, pin};
 
 use crate::Task;
 
+pub struct WorkerThreadBuilder(
+    fn(
+        usize,
+        Option<usize>,
+        Option<&str>,
+        &Arc<async_executor::Executor<'static>>,
+        &async_channel::Receiver<()>,
+    ) -> JoinHandle<()>,
+);
+
 /// Used to create a [`TaskPool`]
 #[derive(Debug, Default, Clone)]
 #[must_use]
@@ -22,6 +32,66 @@ pub struct TaskPoolBuilder {
     /// Allows customizing the name of the threads - helpful for debugging. If set, threads will
     /// be named <thread_name> (<thread_index>), i.e. "MyThreadPool (2)"
     thread_name: Option<String>,
+    thread_builder: Option<WorkerThreadBuilder>,
+}
+
+impl Default for WorkerThreadBuilder {
+    fn default() -> Self {
+        WorkerThreadBuilder(create_worker_thread)
+    }
+}
+
+impl Clone for WorkerThreadBuilder {
+    fn clone(&self) -> Self {
+        WorkerThreadBuilder(self.0)
+    }
+}
+
+impl std::fmt::Debug for WorkerThreadBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("WorkerThreadBuilder").finish()
+    }
+}
+
+fn create_worker_thread(
+    i: usize,
+    stack_size: Option<usize>,
+    thread_name: Option<&str>,
+    executor: &Arc<async_executor::Executor<'static>>,
+    shutdown_rx: &async_channel::Receiver<()>,
+) -> JoinHandle<()> {
+    let ex = Arc::clone(executor);
+    let shutdown_rx = shutdown_rx.clone();
+
+    // miri does not support setting thread names
+    // TODO: change back when https://github.com/rust-lang/miri/issues/1717 is fixed
+    #[cfg(not(miri))]
+    let mut thread_builder = {
+        let thread_name = if let Some(thread_name) = thread_name {
+            format!("{} ({})", thread_name, i)
+        } else {
+            format!("TaskPool ({})", i)
+        };
+        thread::Builder::new().name(thread_name)
+    };
+    #[cfg(miri)]
+    let mut thread_builder = {
+        let _ = i;
+        let _ = thread_name;
+        thread::Builder::new()
+    };
+
+    if let Some(stack_size) = stack_size {
+        thread_builder = thread_builder.stack_size(stack_size);
+    }
+
+    thread_builder
+        .spawn(move || {
+            let shutdown_future = ex.run(shutdown_rx.recv());
+            // Use unwrap_err because we expect a Closed error
+            future::block_on(shutdown_future).unwrap_err();
+        })
+        .expect("Failed to spawn thread.")
 }
 
 impl TaskPoolBuilder {
@@ -50,12 +120,28 @@ impl TaskPoolBuilder {
         self
     }
 
+    /// Override the thread builder used to create the threads. If set, we'll use the given
+    pub fn thread_builder(
+        mut self,
+        thread_builder: fn(
+            usize,
+            Option<usize>,
+            Option<&str>,
+            &Arc<async_executor::Executor<'static>>,
+            &async_channel::Receiver<()>,
+        ) -> JoinHandle<()>,
+    ) -> Self {
+        self.thread_builder = Some(WorkerThreadBuilder(thread_builder));
+        self
+    }
+
     /// Creates a new [`TaskPool`] based on the current options.
     pub fn build(self) -> TaskPool {
         TaskPool::new_internal(
             self.num_threads,
             self.stack_size,
             self.thread_name.as_deref(),
+            self.thread_builder.clone(),
         )
     }
 }
@@ -109,6 +195,7 @@ impl TaskPool {
         num_threads: Option<usize>,
         stack_size: Option<usize>,
         thread_name: Option<&str>,
+        worker_thread_builder: Option<WorkerThreadBuilder>,
     ) -> Self {
         let (shutdown_tx, shutdown_rx) = async_channel::unbounded::<()>();
 
@@ -116,41 +203,11 @@ impl TaskPool {
 
         let num_threads = num_threads.unwrap_or_else(num_cpus::get);
 
+        let worker_thread_builder =
+            worker_thread_builder.unwrap_or_else(|| WorkerThreadBuilder(create_worker_thread));
+
         let threads = (0..num_threads)
-            .map(|i| {
-                let ex = Arc::clone(&executor);
-                let shutdown_rx = shutdown_rx.clone();
-
-                // miri does not support setting thread names
-                // TODO: change back when https://github.com/rust-lang/miri/issues/1717 is fixed
-                #[cfg(not(miri))]
-                let mut thread_builder = {
-                    let thread_name = if let Some(thread_name) = thread_name {
-                        format!("{} ({})", thread_name, i)
-                    } else {
-                        format!("TaskPool ({})", i)
-                    };
-                    thread::Builder::new().name(thread_name)
-                };
-                #[cfg(miri)]
-                let mut thread_builder = {
-                    let _ = i;
-                    let _ = thread_name;
-                    thread::Builder::new()
-                };
-
-                if let Some(stack_size) = stack_size {
-                    thread_builder = thread_builder.stack_size(stack_size);
-                }
-
-                thread_builder
-                    .spawn(move || {
-                        let shutdown_future = ex.run(shutdown_rx.recv());
-                        // Use unwrap_err because we expect a Closed error
-                        future::block_on(shutdown_future).unwrap_err();
-                    })
-                    .expect("Failed to spawn thread.")
-            })
+            .map(|i| (worker_thread_builder.0)(i, stack_size, thread_name, &executor, &shutdown_rx))
             .collect();
 
         Self {

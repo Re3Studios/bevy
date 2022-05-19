@@ -88,7 +88,8 @@ impl Time {
     }
 }
 
-pub(crate) fn time_system(mut time: ResMut<Time>) {
+/// A system that updates the resource [`Time`]
+pub fn time_system(mut time: ResMut<Time>) {
     time.update();
 }
 
