@@ -56,13 +56,19 @@ pub struct App {
     pub runner: Box<dyn Fn(App)>,
     /// A container of [`Stage`]s set to be run in a linear order.
     pub schedule: Schedule,
-    sub_apps: HashMap<Box<dyn AppLabel>, SubApp>,
+    /// a map of [`AppLabel`]s to [`SystemSet`]s
+    pub sub_apps: HashMap<Box<dyn AppLabel>, SubApp>,
+    /// Similar to [`App.runner`], but it does not consume app, allowing for a custom update loop.
+    pub updater: Box<dyn Fn(&mut App)>,
 }
 
 /// Each `SubApp` has its own [`Schedule`] and [`World`], enabling a separation of concerns.
-struct SubApp {
-    app: App,
-    runner: Box<dyn Fn(&mut World, &mut App)>,
+pub struct SubApp {
+    /// The inner data of a SubApp,
+    pub app: App,
+    /// the updater used to update the SubApp, where the [`&mut World`] is the [`World`] of the main [`App`]
+    /// and the [`&mut App`] is the [`SubApp.app  ``]
+    pub updater: Box<dyn Fn(&mut World, &mut App)>,
 }
 
 impl Default for App {
@@ -100,6 +106,7 @@ impl App {
             schedule: Default::default(),
             runner: Box::new(run_once),
             sub_apps: HashMap::default(),
+            updater: Box::new(default_update),
         }
     }
 
@@ -111,10 +118,14 @@ impl App {
     pub fn update(&mut self) {
         #[cfg(feature = "trace")]
         let _bevy_frame_update_span = info_span!("frame").entered();
-        self.schedule.run(&mut self.world);
-        for sub_app in self.sub_apps.values_mut() {
-            (sub_app.runner)(&mut self.world, &mut sub_app.app);
-        }
+        let updater = std::mem::replace(&mut self.updater, Box::new(default_update));
+        (updater)(self);
+        self.updater = updater;
+
+        // self.schedule.run(&mut self.world);
+        // for sub_app in self.sub_apps.values_mut() {
+        //     (sub_app.runner)(&mut self.world, &mut sub_app.app);
+        // }
     }
 
     /// Starts the application by calling the app's [runner function](Self::set_runner).
@@ -749,6 +760,14 @@ impl App {
         self
     }
 
+    /// Sets a updater function that will be called when the app is updated.
+    /// This is the similar as [`App::set_runner`](Self::set_runner), but allow
+    /// to mutate the behavior when the app is updated.
+    pub fn set_updater(&mut self, updater: impl Fn(&mut App) + 'static) -> &mut Self {
+        self.updater = Box::new(updater);
+        self
+    }
+
     /// Adds a single [`Plugin`].
     ///
     /// One of Bevy's core principles is modularity. All Bevy engine features are implemented
@@ -867,7 +886,7 @@ impl App {
             Box::new(label),
             SubApp {
                 app,
-                runner: Box::new(sub_app_runner),
+                updater: Box::new(sub_app_runner),
             },
         );
         self
@@ -918,6 +937,13 @@ impl App {
 
 fn run_once(mut app: App) {
     app.update();
+}
+
+fn default_update(app: &mut App) {
+    app.schedule.run(&mut app.world);
+    for sub_app in app.sub_apps.values_mut() {
+        (sub_app.updater)(&mut app.world, &mut sub_app.app);
+    }
 }
 
 /// An event that indicates the [`App`] should exit. This will fully exit the app process.
