@@ -204,7 +204,7 @@ impl TaskPool {
         let num_threads = num_threads.unwrap_or_else(num_cpus::get);
 
         let worker_thread_builder =
-            worker_thread_builder.unwrap_or_else(|| WorkerThreadBuilder(create_worker_thread));
+            worker_thread_builder.unwrap_or(WorkerThreadBuilder(create_worker_thread));
 
         let threads = (0..num_threads)
             .map(|i| (worker_thread_builder.0)(i, stack_size, thread_name, &executor, &shutdown_rx))

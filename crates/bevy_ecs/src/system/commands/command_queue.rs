@@ -73,6 +73,8 @@ impl CommandQueue {
     /// This clears the queue.
     #[inline]
     pub fn apply(&mut self, world: &mut World) {
+        #[cfg(feature = "trace")]
+        let _span = bevy_utils::tracing::trace_span!("command_queue::apply").entered();
         // flush the previously queued entities
         world.flush();
 
