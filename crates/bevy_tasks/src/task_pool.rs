@@ -1,6 +1,7 @@
 use std::{
     future::Future,
     mem,
+    panic::catch_unwind,
     pin::Pin,
     sync::Arc,
     thread::{self, JoinHandle},
@@ -286,9 +287,14 @@ impl TaskPool {
                     if let Some(result) = future::block_on(future::poll_once(&mut spawned)) {
                         break result;
                     };
-
-                    self.executor.try_tick();
-                    local_executor.try_tick();
+                    let global_executor = &*self.executor;
+                    // The reason why we catch the panic here is that we do not want to propagate the
+                    // panic from worker threads from a different panicked task.
+                    // Only propagate the panic if and only if the task is polled.
+                    let result = catch_unwind(|| {
+                        global_executor.try_tick();
+                        local_executor.try_tick()
+                    });
                 }
             }
         })
