@@ -53,13 +53,13 @@ pub struct App {
     /// the application's event loop and advancing the [`Schedule`].
     /// Typically, it is not configured manually, but set by one of Bevy's built-in plugins.
     /// See `bevy::winit::WinitPlugin` and [`ScheduleRunnerPlugin`](crate::schedule_runner::ScheduleRunnerPlugin).
-    pub runner: Box<dyn Fn(App)>,
+    pub runner: Box<dyn Fn(App) + Send>,
     /// A container of [`Stage`]s set to be run in a linear order.
     pub schedule: Schedule,
     /// a map of [`AppLabel`]s to [`SystemSet`]s
     pub sub_apps: HashMap<Box<dyn AppLabel>, SubApp>,
     /// Similar to [`App.runner`], but it does not consume app, allowing for a custom update loop.
-    pub updater: Box<dyn Fn(&mut App)>,
+    pub updater: Box<dyn Fn(&mut App) + Send>,
 }
 
 /// Each `SubApp` has its own [`Schedule`] and [`World`], enabling a separation of concerns.
@@ -68,7 +68,7 @@ pub struct SubApp {
     pub app: App,
     /// the updater used to update the SubApp, where the [`&mut World`] is the [`World`] of the main [`App`]
     /// and the [`&mut App`] is the [`SubApp.app  ``]
-    pub updater: Box<dyn Fn(&mut World, &mut App)>,
+    pub updater: Box<dyn Fn(&mut World, &mut App)  + Send>,
 }
 
 impl Default for App {
@@ -755,7 +755,7 @@ impl App {
     /// App::new()
     ///     .set_runner(my_runner);
     /// ```
-    pub fn set_runner(&mut self, run_fn: impl Fn(App) + 'static) -> &mut Self {
+    pub fn set_runner(&mut self, run_fn: impl Fn(App) + Send + 'static ) -> &mut Self {
         self.runner = Box::new(run_fn);
         self
     }
@@ -763,7 +763,7 @@ impl App {
     /// Sets a updater function that will be called when the app is updated.
     /// This is the similar as [`App::set_runner`](Self::set_runner), but allow
     /// to mutate the behavior when the app is updated.
-    pub fn set_updater(&mut self, updater: impl Fn(&mut App) + 'static) -> &mut Self {
+    pub fn set_updater(&mut self, updater: impl Fn(&mut App) + Send + 'static ) -> &mut Self {
         self.updater = Box::new(updater);
         self
     }
@@ -880,7 +880,7 @@ impl App {
         &mut self,
         label: impl AppLabel,
         app: App,
-        sub_app_runner: impl Fn(&mut World, &mut App) + 'static,
+        sub_app_runner: impl Fn(&mut World, &mut App)+ Send + 'static,
     ) -> &mut Self {
         self.sub_apps.insert(
             Box::new(label),
@@ -906,7 +906,7 @@ impl App {
 
     /// Retrieves a `SubApp` inside this [`App`] with the given label, if it exists. Otherwise returns
     /// an [`Err`] containing the given label.
-    pub fn get_sub_app_mut(&mut self, label: impl AppLabel) -> Result<&mut App, impl AppLabel> {
+    pub fn get_sub_app_mut(&mut self, label: impl AppLabel + Send) -> Result<&mut App, impl AppLabel> {
         self.sub_apps
             .get_mut((&label) as &dyn AppLabel)
             .map(|sub_app| &mut sub_app.app)
@@ -918,7 +918,7 @@ impl App {
     /// # Panics
     ///
     /// Panics if the `SubApp` doesn't exist.
-    pub fn sub_app(&self, label: impl AppLabel) -> &App {
+    pub fn sub_app(&self, label: impl AppLabel + Send) -> &App {
         match self.get_sub_app(label) {
             Ok(app) => app,
             Err(label) => panic!("Sub-App with label '{:?}' does not exist", label),
