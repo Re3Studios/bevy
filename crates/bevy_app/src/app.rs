@@ -58,16 +58,22 @@ pub struct App {
     /// the application's event loop and advancing the [`Schedule`].
     /// Typically, it is not configured manually, but set by one of Bevy's built-in plugins.
     /// See `bevy::winit::WinitPlugin` and [`ScheduleRunnerPlugin`](crate::schedule_runner::ScheduleRunnerPlugin).
-    pub runner: Box<dyn Fn(App)>,
+    pub runner: Box<dyn Fn(App) + Send>,
     /// A container of [`Stage`]s set to be run in a linear order.
     pub schedule: Schedule,
-    sub_apps: HashMap<AppLabelId, SubApp>,
+    /// a map of [`AppLabel`]s to [`SystemSet`]s
+    pub sub_apps: HashMap<AppLabelId, SubApp>,
+    /// Similar to [`App.runner`], but it does not consume app, allowing for a custom update loop.
+    pub updater: Box<dyn Fn(&mut App) + Send>,
 }
 
 /// Each `SubApp` has its own [`Schedule`] and [`World`], enabling a separation of concerns.
-struct SubApp {
-    app: App,
-    runner: Box<dyn Fn(&mut World, &mut App)>,
+pub struct SubApp {
+    /// The inner data of a SubApp,
+    pub app: App,
+    /// the updater used to update the SubApp, where the [`&mut World`] is the [`World`] of the main [`App`]
+    /// and the [`&mut App`] is the [`SubApp.app  ``]
+    pub updater: Box<dyn Fn(&mut World, &mut App)  + Send>,
 }
 
 impl Default for App {
@@ -105,6 +111,7 @@ impl App {
             schedule: Default::default(),
             runner: Box::new(run_once),
             sub_apps: HashMap::default(),
+            updater: Box::new(default_update),
         }
     }
 
@@ -116,10 +123,14 @@ impl App {
     pub fn update(&mut self) {
         #[cfg(feature = "trace")]
         let _bevy_frame_update_span = info_span!("frame").entered();
-        self.schedule.run(&mut self.world);
-        for sub_app in self.sub_apps.values_mut() {
-            (sub_app.runner)(&mut self.world, &mut sub_app.app);
-        }
+        let updater = std::mem::replace(&mut self.updater, Box::new(default_update));
+        (updater)(self);
+        self.updater = updater;
+
+        // self.schedule.run(&mut self.world);
+        // for sub_app in self.sub_apps.values_mut() {
+        //     (sub_app.runner)(&mut self.world, &mut sub_app.app);
+        // }
     }
 
     /// Starts the application by calling the app's [runner function](Self::set_runner).
@@ -749,8 +760,16 @@ impl App {
     /// App::new()
     ///     .set_runner(my_runner);
     /// ```
-    pub fn set_runner(&mut self, run_fn: impl Fn(App) + 'static) -> &mut Self {
+    pub fn set_runner(&mut self, run_fn: impl Fn(App) + Send + 'static ) -> &mut Self {
         self.runner = Box::new(run_fn);
+        self
+    }
+
+    /// Sets a updater function that will be called when the app is updated.
+    /// This is the similar as [`App::set_runner`](Self::set_runner), but allow
+    /// to mutate the behavior when the app is updated.
+    pub fn set_updater(&mut self, updater: impl Fn(&mut App) + Send + 'static ) -> &mut Self {
+        self.updater = Box::new(updater);
         self
     }
 
@@ -921,13 +940,13 @@ impl App {
         &mut self,
         label: impl AppLabel,
         app: App,
-        sub_app_runner: impl Fn(&mut World, &mut App) + 'static,
+        sub_app_runner: impl Fn(&mut World, &mut App)+ Send + 'static,
     ) -> &mut Self {
         self.sub_apps.insert(
             label.as_label(),
             SubApp {
                 app,
-                runner: Box::new(sub_app_runner),
+                updater: Box::new(sub_app_runner),
             },
         );
         self
@@ -938,7 +957,7 @@ impl App {
     /// # Panics
     ///
     /// Panics if the `SubApp` doesn't exist.
-    pub fn sub_app_mut(&mut self, label: impl AppLabel) -> &mut App {
+    pub fn sub_app_mut(&mut self, label: impl AppLabel + Send) -> &mut App {
         match self.get_sub_app_mut(label) {
             Ok(app) => app,
             Err(label) => panic!("Sub-App with label '{:?}' does not exist", label.as_str()),
@@ -947,7 +966,7 @@ impl App {
 
     /// Retrieves a `SubApp` inside this [`App`] with the given label, if it exists. Otherwise returns
     /// an [`Err`] containing the given label.
-    pub fn get_sub_app_mut(&mut self, label: impl AppLabel) -> Result<&mut App, AppLabelId> {
+    pub fn get_sub_app_mut(&mut self, label: impl AppLabel + Send) -> Result<&mut App, AppLabelId> {
         let label = label.as_label();
         self.sub_apps
             .get_mut(&label)
@@ -960,7 +979,7 @@ impl App {
     /// # Panics
     ///
     /// Panics if the `SubApp` doesn't exist.
-    pub fn sub_app(&self, label: impl AppLabel) -> &App {
+    pub fn sub_app(&self, label: impl AppLabel + Send) -> &App {
         match self.get_sub_app(label) {
             Ok(app) => app,
             Err(label) => panic!("Sub-App with label '{:?}' does not exist", label.as_str()),
@@ -979,6 +998,13 @@ impl App {
 
 fn run_once(mut app: App) {
     app.update();
+}
+
+fn default_update(app: &mut App) {
+    app.schedule.run(&mut app.world);
+    for sub_app in app.sub_apps.values_mut() {
+        (sub_app.updater)(&mut app.world, &mut sub_app.app);
+    }
 }
 
 /// An event that indicates the [`App`] should exit. This will fully exit the app process at the
