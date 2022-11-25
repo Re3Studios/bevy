@@ -268,8 +268,8 @@ impl Typed for DynamicArray {
 
 /// An iterator over an [`Array`].
 pub struct ArrayIter<'a> {
-    pub(crate) array: &'a dyn Array,
-    pub(crate) index: usize,
+    pub array: &'a dyn Array,
+    pub index: usize,
 }
 
 impl<'a> Iterator for ArrayIter<'a> {
