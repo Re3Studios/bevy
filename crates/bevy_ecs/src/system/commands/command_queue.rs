@@ -155,7 +155,7 @@ mod test {
 
     impl Command for SpawnCommand {
         fn write(self, world: &mut World) {
-            world.spawn();
+            world.spawn_empty();
         }
     }
 
