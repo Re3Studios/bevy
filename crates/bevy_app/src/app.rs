@@ -94,7 +94,7 @@ pub struct SubApp {
     pub app: App,
     /// the updater used to update the SubApp, where the [`&mut World`] is the [`World`] of the main [`App`]
     /// and the [`&mut App`] is the [`SubApp.app  ``]
-    pub updater: Box<dyn Fn(&mut World, &mut App)  + Send>,
+    pub updater: Box<dyn Fn(&mut World, &mut App) + Send>,
 }
 
 impl Debug for SubApp {
@@ -810,7 +810,7 @@ impl App {
     /// App::new()
     ///     .set_runner(my_runner);
     /// ```
-    pub fn set_runner(&mut self, run_fn: impl Fn(App) + Send + 'static ) -> &mut Self {
+    pub fn set_runner(&mut self, run_fn: impl Fn(App) + Send + 'static) -> &mut Self {
         self.runner = Box::new(run_fn);
         self
     }
@@ -818,7 +818,7 @@ impl App {
     /// Sets a updater function that will be called when the app is updated.
     /// This is the similar as [`App::set_runner`](Self::set_runner), but allow
     /// to mutate the behavior when the app is updated.
-    pub fn set_updater(&mut self, updater: impl Fn(&mut App) + Send + 'static ) -> &mut Self {
+    pub fn set_updater(&mut self, updater: impl Fn(&mut App) + Send + 'static) -> &mut Self {
         self.updater = Box::new(updater);
         self
     }
@@ -1009,7 +1009,7 @@ impl App {
         &mut self,
         label: impl AppLabel,
         app: App,
-        sub_app_runner: impl Fn(&mut World, &mut App)+ Send + 'static,
+        sub_app_runner: impl Fn(&mut World, &mut App) + Send + 'static,
     ) -> &mut Self {
         self.sub_apps.insert(
             label.as_label(),
