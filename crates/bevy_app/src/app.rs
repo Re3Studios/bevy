@@ -68,7 +68,7 @@ pub struct App {
     /// the application's event loop and advancing the [`Schedule`].
     /// Typically, it is not configured manually, but set by one of Bevy's built-in plugins.
     /// See `bevy::winit::WinitPlugin` and [`ScheduleRunnerPlugin`](crate::schedule_runner::ScheduleRunnerPlugin).
-    pub runner: Box<dyn Fn(App) + Send>, // Send bound is required to make App Send
+    pub runner: Box<dyn Fn(App) + Send + Sync>, // Send bound is required to make App Send
     /// The schedule that systems are added to by default.
     ///
     /// This is initially set to [`CoreSchedule::Main`].
@@ -145,7 +145,7 @@ pub struct SubApp {
 
     /// A function that allows access to both the [`SubApp`] [`World`] and the main [`App`]. This is
     /// useful for moving data between the sub app and the main app.
-    extract: Box<dyn Fn(&mut World, &mut App) + Send>,
+    extract: Box<dyn Fn(&mut World, &mut App) + Send + Sync>,
 }
 
 impl SubApp {
@@ -155,7 +155,7 @@ impl SubApp {
     /// After extract is called, the [`Schedule`] of the sub app is run. The [`World`]
     /// parameter represents the main app world, while the [`App`] parameter is just a mutable
     /// reference to the `SubApp` itself.
-    pub fn new(app: App, extract: impl Fn(&mut World, &mut App) + Send + 'static) -> Self {
+    pub fn new(app: App, extract: impl Fn(&mut World, &mut App) + Send + Sync + 'static) -> Self {
         Self {
             app,
             extract: Box::new(extract),
@@ -704,7 +704,7 @@ impl App {
     /// App::new()
     ///     .set_runner(my_runner);
     /// ```
-    pub fn set_runner(&mut self, run_fn: impl Fn(App) + 'static + Send) -> &mut Self {
+    pub fn set_runner(&mut self, run_fn: impl Fn(App) + 'static + Send + Sync) -> &mut Self {
         self.runner = Box::new(run_fn);
         self
     }
