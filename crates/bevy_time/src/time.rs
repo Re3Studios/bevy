@@ -176,6 +176,45 @@ impl Time {
         self.last_update = Some(instant);
     }
 
+    /// do not trust the last update time due to debugging or pausing
+    pub fn update_with_instant_and_duration(&mut self, instant: Instant, raw_delta: Duration) {
+        let delta = if self.paused {
+            Duration::ZERO
+        } else if self.relative_speed != 1.0 {
+            raw_delta.mul_f64(self.relative_speed)
+        } else {
+            // avoid rounding when at normal speed
+            raw_delta
+        };
+
+        if self.last_update.is_some() {
+            self.delta = delta;
+            self.delta_seconds = self.delta.as_secs_f32();
+            self.delta_seconds_f64 = self.delta.as_secs_f64();
+            self.raw_delta = raw_delta;
+            self.raw_delta_seconds = self.raw_delta.as_secs_f32();
+            self.raw_delta_seconds_f64 = self.raw_delta.as_secs_f64();
+        } else {
+            self.first_update = Some(instant);
+        }
+
+        self.elapsed += delta;
+        self.elapsed_seconds = self.elapsed.as_secs_f32();
+        self.elapsed_seconds_f64 = self.elapsed.as_secs_f64();
+        self.raw_elapsed += raw_delta;
+        self.raw_elapsed_seconds = self.raw_elapsed.as_secs_f32();
+        self.raw_elapsed_seconds_f64 = self.raw_elapsed.as_secs_f64();
+
+        self.elapsed_wrapped = duration_div_rem(self.elapsed, self.wrap_period).1;
+        self.elapsed_seconds_wrapped = self.elapsed_wrapped.as_secs_f32();
+        self.elapsed_seconds_wrapped_f64 = self.elapsed_wrapped.as_secs_f64();
+        self.raw_elapsed_wrapped = duration_div_rem(self.raw_elapsed, self.wrap_period).1;
+        self.raw_elapsed_seconds_wrapped = self.raw_elapsed_wrapped.as_secs_f32();
+        self.raw_elapsed_seconds_wrapped_f64 = self.raw_elapsed_wrapped.as_secs_f64();
+
+        self.last_update = Some(instant);
+    }
+
     /// Returns the [`Instant`] the clock was created.
     ///
     /// This usually represents when the app was started.
